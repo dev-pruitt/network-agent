@@ -1,0 +1,18 @@
+[Unit]
+Description=Network Agent Dashboard API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent
+WorkingDirectory=/home/agent/network-agent-backup/dashboard
+Environment="PATH=/home/agent/network-agent-backup/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/agent/network-agent-backup/venv/bin/python3 api.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

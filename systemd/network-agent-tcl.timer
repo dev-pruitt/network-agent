@@ -1,0 +1,10 @@
+[Unit]
+Description=Network Agent TCL HomeKit Monitor Timer (10 min)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,135 @@
+{% extends "_base.html" %}
+{% block title %}Proposals &middot; Network Agent{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Proposals</h1>
+  <p>Level 2 tunnel rotations run autonomously. Everything else waits here for you.</p>
+</div>
+
+<section>
+  <div class="sec-head">
+    <div class="seg" id="filters">
+      <button class="active" data-f="open">Open</button>
+      <button data-f="pending">Pending</button>
+      <button data-f="approved">Approved</button>
+      <button data-f="all">All</button>
+      <button data-f="executed">Executed</button>
+      <button data-f="denied">Denied</button>
+      <button data-f="superseded">Superseded</button>
+    </div>
+    <div class="spacer"></div><span class="count" id="count"></span>
+  </div>
+  <div id="list"><div class="panel"><div class="panel-pad dim">Loading&hellip;</div></div></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* Default is "open" - anything not in a terminal state. Defaulting to
+   "pending" made the page look empty while 4 approved proposals sat with no
+   executor to claim them, which is exactly how they went unnoticed. */
+let all = [], filter = 'open';
+
+/* Read ?filter= so the Overview card can deep-link straight to the right view. */
+(function () {
+  const f = new URLSearchParams(location.search).get('filter');
+  if (f) filter = f;
+})();
+
+const SEV = { 1: 'info', 2: 'warn', 3: 'crit' };
+const STATUS_CLS = { pending: 'warn', approved: 'info', executed: 'ok',
+                     failed: 'crit', denied: '', rejected: '', expired: '', superseded: '' };
+
+function decide(pid, decision) {
+  NA.action({
+    confirm: decision.toUpperCase() + ' proposal ' + pid + '?',
+    pending: 'Recording ' + decision + '…',
+    okTitle: 'Proposal ' + decision,
+    failTitle: 'Could not record decision',
+    url: '/api/proposals/decide?pid=' + encodeURIComponent(pid) + '&decision=' + decision,
+    after: load
+  });
+}
+window.decide = decide;
+
+const EMPTY_MSG = {
+  open:      'Nothing is open. Every proposal has been actioned or closed out.',
+  pending:   'No proposal is waiting on a decision.',
+  approved:  'Nothing approved is sitting unexecuted.',
+  executed:  'No proposal has been executed yet.',
+  denied:    'Nothing has been denied.',
+  superseded:'Nothing has been superseded.'
+};
+
+function render() {
+  const list = filter === 'all' ? all : all.filter(function (p) {
+    if (filter === 'open')   return p.status === 'pending' || p.status === 'approved';
+    if (filter === 'denied') return p.status === 'denied' || p.status === 'rejected';
+    return p.status === filter;
+  });
+  document.getElementById('count').textContent = list.length + ' of ' + all.length;
+
+  if (!list.length) {
+    document.getElementById('list').innerHTML =
+      '<div class="panel"><div class="empty"><div class="big">Nothing here</div>' +
+      '<div class="sm">' + NA.esc(EMPTY_MSG[filter] || 'No proposals in this state.') +
+      '</div></div></div>';
+    return;
+  }
+
+  document.getElementById('list').innerHTML = list.slice().reverse().map(function (p) {
+    const open = p.status === 'pending';
+    return '<div class="panel" style="margin-bottom:10px"><div class="panel-pad">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:wrap">' +
+        '<span class="badge ' + (SEV[p.severity] || '') + '">L' + NA.esc(p.severity) + '</span>' +
+        '<span class="badge ' + (STATUS_CLS[p.status] || '') + '">' + NA.esc(p.status) + '</span>' +
+        '<span class="mono dim" style="font-size:11.5px">' + NA.esc(p.component || '') + '</span>' +
+        '<div style="flex:1"></div>' +
+        '<span class="mono dim" style="font-size:11px">' + NA.ago(p.timestamp) + '</span>' +
+      '</div>' +
+      '<div style="margin-bottom:5px">' + NA.esc(p.details || '') + '</div>' +
+      (p.recommended_action ? '<div class="dim" style="font-size:12.5px">&rarr; ' + NA.esc(p.recommended_action) + '</div>' : '') +
+      (p.execution_result ? '<div class="dim mono" style="font-size:11.5px;margin-top:6px">' + NA.esc(p.execution_result.slice(0, 200)) + '</div>' : '') +
+      '<div class="mono dim" style="font-size:11px;margin-top:8px">' + NA.esc(p.proposal_id) + '</div>' +
+      (open ? '<div class="btn-row" style="margin-top:11px">' +
+        '<button class="btn primary sm" onclick="decide(\'' + NA.esc(p.proposal_id) + '\',\'approved\')">Approve</button>' +
+        '<button class="btn danger sm" onclick="decide(\'' + NA.esc(p.proposal_id) + '\',\'denied\')">Deny</button></div>' : '') +
+    '</div></div>';
+  }).join('');
+}
+
+async function load() {
+  const d = await NA.get('/api/proposals/pending');
+  all = Array.isArray(d) ? d : [];
+  /* The pill must agree with the Overview card. Counting only `pending` here
+     showed a teal "nothing pending" while four approved-but-unrun items sat
+     on the page below it. */
+  const open = all.filter(function (p) {
+    return p.status === 'pending' || p.status === 'approved';
+  });
+  const crit = open.filter(function (p) { return p.severity >= 3; }).length;
+  NA.setSysState(crit ? 'crit' : open.length ? 'warn' : 'ok',
+                 open.length ? open.length + ' open' : 'nothing open');
+  render();
+}
+
+document.getElementById('filters').addEventListener('click', function (e) {
+  if (e.target.tagName !== 'BUTTON') return;
+  filter = e.target.getAttribute('data-f');
+  this.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+  e.target.classList.add('active');
+  render();
+});
+
+/* keep the segmented control in step with the active filter, which may have
+   come from ?filter= rather than the default */
+(function () {
+  document.querySelectorAll('#filters button').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-f') === filter);
+  });
+})();
+
+NA.poll(load, 15000);
+</script>
+{% endblock %}

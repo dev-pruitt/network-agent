@@ -1,0 +1,10 @@
+[Unit]
+Description=Capture router syslog to durable storage on agent PC
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=agent
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/agent/network-agent/venv/bin/python3 /home/agent/network-agent/scripts/capture_router_logs.py

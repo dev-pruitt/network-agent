@@ -1,0 +1,109 @@
+{% extends "_base.html" %}
+{% block title %}Health &middot; Network Agent{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>System health</h1>
+  <p>Agent PC resources, services and scheduled work.</p>
+</div>
+
+<section>
+  <div class="sec-head"><h2>Resources</h2></div>
+  <div class="stats" id="res"><div class="stat"><div class="label">Loading</div><div class="value"><span class="skel" style="display:inline-block;width:60px"></span></div></div></div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>Services</h2></div>
+  <div class="panel"><table class="data"><tbody id="svc">
+    <tr><td class="dim">Loading&hellip;</td></tr>
+  </tbody></table></div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>Timers</h2></div>
+  <div class="panel"><table class="data">
+    <thead><tr><th>Timer</th><th class="hide-sm">Last run</th><th style="text-align:right">Next run</th></tr></thead>
+    <tbody id="timers"><tr><td colspan="3" class="dim">Loading&hellip;</td></tr></tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>Router control</h2></div>
+  <div class="panel"><div class="panel-pad">
+    <p class="dim" style="margin:0 0 12px;font-size:13px">
+      Rebooting drops both tunnels and every client for roughly two minutes.
+      Your guardrails list &ldquo;reboot router without approval&rdquo; as a forbidden
+      action, so this stays manual and off the overview page.
+    </p>
+    <button class="btn danger" id="reboot">Reboot router</button>
+  </div></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('reboot').addEventListener('click', function () {
+  NA.action({
+    confirm: 'Reboot the router? Both tunnels and all clients drop for ~2 minutes.',
+    confirm2: 'Second confirmation: really reboot now?',
+    pending: 'Sending reboot…',
+    okTitle: 'Reboot sent',
+    okBody: function () { return 'Router should be back in about two minutes.'; },
+    failTitle: 'Reboot failed',
+    url: '/api/actions/reboot?confirm=yes-i-sure'
+  });
+});
+
+function bar(pct) {
+  const lvl = NA.level('pct', pct);
+  return '<div class="bar ' + lvl + '"><i style="width:' + Math.min(100, pct) + '%"></i></div>';
+}
+
+async function load() {
+  const d = await NA.get('/api/system/health');
+  if (d.error) {
+    document.getElementById('res').innerHTML =
+      '<div class="stat crit"><div class="label">Error</div><div class="value">—</div>' +
+      '<div class="sub">' + NA.esc(d.error) + '</div></div>';
+    NA.setSysState('crit', 'health probe failed');
+    return;
+  }
+
+  const worst = Math.max(d.cpu_percent, d.mem_percent, d.disk_percent);
+  NA.setSysState(NA.level('pct', worst), 'peak resource ' + Math.round(worst) + '%');
+
+  const card = function (label, value, sub, pct) {
+    return '<div class="stat ' + NA.level('pct', pct) + '">' +
+      '<div class="label">' + label + '</div>' +
+      '<div class="value">' + value + '</div>' +
+      '<div class="sub">' + sub + '</div>' +
+      '<div style="margin-top:9px">' + bar(pct) + '</div></div>';
+  };
+
+  document.getElementById('res').innerHTML =
+    card('CPU', d.cpu_percent + '%', 'current load', d.cpu_percent) +
+    card('Memory', d.mem_percent + '%', d.mem_used_mb + ' / ' + d.mem_total_mb + ' MB', d.mem_percent) +
+    card('Disk', d.disk_percent + '%', d.disk_used_gb + ' / ' + d.disk_total_gb + ' GB', d.disk_percent) +
+    '<div class="stat ok"><div class="label">Uptime</div><div class="value" style="font-size:19px">' +
+      NA.esc(d.uptime_human) + '</div><div class="sub">since last boot</div></div>';
+
+  document.getElementById('svc').innerHTML =
+    '<tr><td>Ollama LLM</td><td style="text-align:right">' +
+    (d.ollama_status === 'online'
+      ? '<span class="badge ok"><i class="dot"></i>online</span>'
+      : '<span class="badge crit"><i class="dot"></i>offline</span>') + '</td></tr>' +
+    '<tr><td>Scheduled timers</td><td style="text-align:right"><span class="badge ' +
+      (d.timers.length ? 'ok' : 'warn') + '">' + d.timers.length + ' active</span></td></tr>';
+
+  document.getElementById('timers').innerHTML = d.timers.length
+    ? d.timers.map(function (t) {
+        return '<tr><td class="mono" style="font-size:12px">' + NA.esc(t.name) + '</td>' +
+               '<td class="dim hide-sm">' + NA.esc(t.last_run || '—') + '</td>' +
+               '<td class="dim" style="text-align:right">' + NA.esc(t.next_run || '—') + '</td></tr>';
+      }).join('')
+    : '<tr><td colspan="3" class="dim">systemd returned no matching timers.</td></tr>';
+}
+
+NA.poll(load, 10000);
+</script>
+{% endblock %}

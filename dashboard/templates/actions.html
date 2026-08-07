@@ -1,0 +1,97 @@
+{% extends "_base.html" %}
+{% block title %}Actions &middot; Network Agent{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Actions</h1>
+  <p>What the agent did on its own. Silent when it did not need to act.</p>
+</div>
+
+<section>
+  <div class="sec-head">
+    <div class="seg" id="filters">
+      <button class="active" data-h="24">24 hours</button>
+      <button data-h="72">3 days</button>
+      <button data-h="168">7 days</button>
+      <button data-h="720">30 days</button>
+    </div>
+  </div>
+  <div class="stats" id="stats" style="margin-bottom:18px"></div>
+  <div id="list"><div class="panel"><div class="panel-pad dim">Loading&hellip;</div></div></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let hours = 24;
+
+async function load() {
+  const d = await NA.get('/api/actions/overnight?hours=' + hours);
+  const stats = document.getElementById('stats');
+  const list = document.getElementById('list');
+
+  if (d.error) {
+    stats.innerHTML = '';
+    list.innerHTML = '<div class="panel"><div class="empty"><div class="big">Could not load actions</div>' +
+                     '<div class="sm">' + NA.esc(d.error) + '</div></div></div>';
+    return;
+  }
+
+  const acts = d.actions || [];
+  const auto = acts.filter(function (a) { return a.autonomous; }).length;
+  const failed = acts.filter(function (a) { return !a.success; }).length;
+  const capHit = d.budget_used >= d.budget_cap;
+
+  NA.setSysState(failed ? 'crit' : capHit ? 'warn' : 'ok',
+                 failed ? failed + ' failed action(s)'
+                        : capHit ? 'autonomy cap reached'
+                        : d.budget_used + '/' + d.budget_cap + ' budget used');
+
+  if (!acts.length) {
+    stats.innerHTML = '';
+    list.innerHTML = '<div class="panel"><div class="empty"><div class="big">Nothing to report</div>' +
+      '<div class="sm">No autonomous actions in the last ' + hours + ' hours. ' +
+      'The agent watched and did not need to act.</div></div></div>';
+    return;
+  }
+
+  const card = function (l, v, s, lvl) {
+    return '<div class="stat ' + lvl + '"><div class="label">' + l + '</div>' +
+           '<div class="value">' + v + '</div><div class="sub">' + s + '</div></div>';
+  };
+  stats.innerHTML =
+    card('Actions', acts.length, 'in window', '') +
+    card('Autonomous', auto, 'no approval needed', 'ok') +
+    card('Failed', failed, failed ? 'needs a look' : 'none', failed ? 'crit' : 'ok') +
+    card('Budget', d.budget_used + ' / ' + d.budget_cap, 'rolling 24h', capHit ? 'warn' : 'ok');
+
+  list.innerHTML = acts.map(function (a) {
+    return '<div class="panel" style="margin-bottom:10px;border-left:3px solid var(--' +
+      (a.success ? 'ok' : 'crit') + ');border-radius:0"><div class="panel-pad">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">' +
+        '<span style="font-weight:650">' + NA.esc(a.action_type) +
+          (a.component ? ' &rarr; ' + NA.esc(a.component) : '') + '</span>' +
+        '<span class="badge ' + (a.autonomous ? 'ok' : 'info') + '">' +
+          (a.autonomous ? 'autonomous' : 'approved') + '</span>' +
+        (a.success ? '' : '<span class="badge crit">failed</span>') +
+        '<div style="flex:1"></div>' +
+        '<span class="mono dim" style="font-size:11px">' + NA.when(a.timestamp) + '</span>' +
+      '</div>' +
+      (a.rationale ? '<div class="dim" style="font-size:13px">' + NA.esc(a.rationale) + '</div>' : '') +
+      (a.error ? '<div style="color:var(--crit);font-size:12.5px;margin-top:5px">' + NA.esc(a.error) + '</div>' : '') +
+      '<div class="mono dim" style="font-size:11px;margin-top:8px">' + NA.esc(a.proposal_id || '') + '</div>' +
+    '</div></div>';
+  }).join('');
+}
+
+document.getElementById('filters').addEventListener('click', function (e) {
+  if (e.target.tagName !== 'BUTTON') return;
+  hours = parseInt(e.target.getAttribute('data-h'), 10);
+  this.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+  e.target.classList.add('active');
+  load();
+});
+
+NA.poll(load, 30000);
+</script>
+{% endblock %}
