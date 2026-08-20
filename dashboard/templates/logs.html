@@ -1,0 +1,61 @@
+{% extends "_base.html" %}
+{% block title %}Logs &middot; Network Agent{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Logs</h1>
+  <p>Raw agent output, newest last.</p>
+</div>
+
+<section>
+  <div class="sec-head">
+    <div class="seg" id="sources">
+      <button class="active" data-s="telemetry">Telemetry</button>
+      <button data-s="diagnostics">Diagnostics</button>
+      <button data-s="actions">Actions</button>
+      <button data-s="proposals">Proposals</button>
+      <button data-s="tcl">TCL</button>
+    </div>
+    <div class="spacer"></div>
+    <span class="count" id="count"></span>
+    <button class="btn sm" id="auto">Auto-refresh: off</button>
+  </div>
+  <pre class="code" id="out">Loading&hellip;</pre>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const API = {
+  telemetry:   '/api/telemetry/latest',
+  diagnostics: '/api/diagnostics/latest',
+  actions:     '/api/actions/history',
+  proposals:   '/api/proposals/pending',
+  tcl:         '/api/tcl/status'
+};
+let source = 'telemetry', timer = null;
+
+async function load() {
+  const d = await NA.get(API[source]);
+  document.getElementById('count').textContent =
+    (Array.isArray(d) ? d.length + ' entries' : '1 entry');
+  document.getElementById('out').textContent = JSON.stringify(d, null, 2);
+}
+
+document.getElementById('sources').addEventListener('click', function (e) {
+  if (e.target.tagName !== 'BUTTON') return;
+  source = e.target.getAttribute('data-s');
+  this.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+  e.target.classList.add('active');
+  load();
+});
+
+document.getElementById('auto').addEventListener('click', function () {
+  if (timer) { clearInterval(timer); timer = null; this.textContent = 'Auto-refresh: off'; }
+  else       { timer = setInterval(load, 10000); this.textContent = 'Auto-refresh: on'; }
+});
+
+NA.setSysState('ok', 'viewing logs');
+load();
+</script>
+{% endblock %}

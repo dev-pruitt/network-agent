@@ -1,0 +1,13 @@
+[Unit]
+Description=Network Agent Daily Email Report
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=agent
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/agent/network-agent/venv/bin/python3 /home/agent/network-agent/scripts/send_email_alert.py
+
+[Install]
+WantedBy=multi-user.target

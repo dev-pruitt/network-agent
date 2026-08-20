@@ -1,0 +1,7 @@
+[Unit]
+Description=Network Agent Issue Diagnoser
+
+[Service]
+Type=oneshot
+User=agent
+ExecStart=/home/agent/network-agent/venv/bin/python3 /home/agent/network-agent/scripts/diagnose_issue.py

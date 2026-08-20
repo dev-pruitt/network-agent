@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}Network Agent{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+<script>
+/* Applied before first paint. Without this, navigating between pages renders
+   the default theme for a frame and flashes. */
+(function () {
+  try { document.documentElement.setAttribute('data-theme', localStorage.getItem('na-theme') || 'dark'); }
+  catch (e) {}
+})();
+</script>
+{% block head %}{% endblock %}
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <span class="brand">NETWORK<span>AGENT</span></span>
+    <nav class="nav">
+      <a href="/">Overview</a>
+      <a href="/wireguard">Tunnels</a>
+      <a href="/servers">Servers</a>
+      <a href="/actions">Actions</a>
+      <a href="/proposals">Proposals</a>
+      <a href="/logs">Logs</a>
+      <a href="/health">Health</a>
+    </nav>
+    <div class="topbar-right">
+      <span class="sysstate live" id="sysstate"><i class="dot"></i>checking</span>
+      <button class="iconbtn" id="theme-btn" title="Toggle theme" aria-label="Toggle theme">&#9680;</button>
+      <a href="/logout" class="btn sm">Sign out</a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+{% block content %}{% endblock %}
+</main>
+
+<div id="toasts"></div>
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

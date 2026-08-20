@@ -1,0 +1,10 @@
+[Unit]
+Description=Network Agent Execution Timer (every 5 min)
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

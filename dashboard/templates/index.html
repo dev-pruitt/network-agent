@@ -1,0 +1,394 @@
+{% extends "_base.html" %}
+{% block title %}Overview &middot; Network Agent{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Overview</h1>
+  <p id="subhead">Live state of the router, tunnels and agent.</p>
+</div>
+
+<section>
+  <div class="stats" id="stats">
+    <div class="stat"><div class="label">Tunnels</div><div class="value"><span class="skel" style="display:inline-block;width:60px"></span></div></div>
+    <div class="stat"><div class="label">DNS leak</div><div class="value"><span class="skel" style="display:inline-block;width:70px"></span></div></div>
+    <div class="stat"><div class="label">TCL units</div><div class="value"><span class="skel" style="display:inline-block;width:50px"></span></div></div>
+    <div class="stat"><div class="label">Pending</div><div class="value"><span class="skel" style="display:inline-block;width:30px"></span></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>Tunnels</h2><div class="spacer"></div>
+    <div class="btn-row">
+      <button class="btn sm" onclick="rotate('wgclient')">Rotate wgclient</button>
+      <button class="btn sm" onclick="rotate('wg2')">Rotate wg2</button>
+    </div>
+  </div>
+  <div class="panel"><table class="data">
+    <thead><tr><th>Tunnel</th><th>Endpoint</th><th class="hide-sm">Received</th><th class="hide-sm">Sent</th><th style="text-align:right">Handshake</th></tr></thead>
+    <tbody id="tun-rows"><tr><td colspan="5" class="dim">Loading&hellip;</td></tr></tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>Tunnel latency</h2><span class="count">last ~200 polls</span></div>
+  <div class="chart-host"><div id="latency-chart" style="width:100%"></div></div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>Tunnel reachability</h2><span class="count" id="rp-sub"></span></div>
+  <div class="panel" id="rp-panel"><div class="panel-pad dim">Loading&hellip;</div></div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>Remote access</h2><span class="count" id="ts-sub"></span></div>
+  <div class="panel" id="ts-panel"><div class="panel-pad dim">Loading&hellip;</div></div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>Server pool</h2><span class="count" id="pool-count"></span>
+    <div class="spacer"></div><a href="/servers" class="btn sm">Manage</a>
+  </div>
+  <div class="panel"><table class="data">
+    <thead><tr><th>Server</th><th>Endpoint</th><th style="text-align:right">State</th></tr></thead>
+    <tbody id="pool-rows"><tr><td colspan="3" class="dim">Loading&hellip;</td></tr></tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="sec-head"><h2>Latest diagnosis</h2></div>
+  <div class="panel" id="diag"><div class="panel-pad dim">Loading&hellip;</div></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function rotate(t) {
+  NA.action({
+    confirm: 'Rotate ' + t + ' to a different Proton server?',
+    pending: 'Rotating ' + t + '…',
+    okTitle: t + ' rotation requested',
+    okBody: function (d) { return d.status === 'success' ? 'Router accepted the request.' : JSON.stringify(d); },
+    failTitle: t + ' rotation failed',
+    after: load
+  });
+}
+
+function statCard(label, value, sub, level, href) {
+  const body = '<div class="label">' + NA.esc(label) + '</div>' +
+               '<div class="value">' + NA.esc(value) + '</div>' +
+               '<div class="sub">' + NA.esc(sub) + '</div>';
+  /* Cards that report a count you can act on should take you to it. Pointing
+     at "4 waiting" with no way to reach them is how they stayed invisible. */
+  return href
+    ? '<a class="stat ' + level + '" href="' + href + '" style="text-decoration:none;color:inherit;display:block">' + body + '</a>'
+    : '<div class="stat ' + level + '">' + body + '</div>';
+}
+
+async function load() {
+  const [wg, tcl, props, diag, pool] = await Promise.all([
+    NA.get('/api/wireguard/status'),
+    NA.get('/api/tcl/status'),
+    NA.get('/api/proposals/pending'),
+    NA.get('/api/diagnostics/latest'),
+    NA.get('/api/server-pool/list')
+  ]);
+
+  /* Tunnels. The old page did `wg.raw ? '2/2 UP' : 'ERROR'`, which reported
+     2/2 UP whenever the endpoint returned any text at all. Count tunnels that
+     actually handshook inside the staleness window instead. */
+  const tuns = wg.raw ? NA.parseWg(wg.raw) : [];
+  const up = tuns.filter(NA.tunnelUp).length;
+  const tLevel = NA.level('tunnels', { up: up, total: tuns.length });
+
+  /* "Waiting on a human" is pending PLUS approved-but-never-executed. An
+     approved proposal that no executor claims (wan1, portal_brute - the
+     rotation script skips anything that is not a tunnel) would otherwise sit
+     invisible forever, which is how 4 of them accumulated unnoticed. */
+  const all = Array.isArray(props) ? props : [];
+  const pending  = all.filter(function (p) { return p.status === 'pending'; });
+  const stuck    = all.filter(function (p) { return p.status === 'approved'; });
+  const waiting  = pending.length + stuck.length;
+
+  /* These ACs are cloud devices - they hold an MQTT session out to the vendor
+     on 8883. They are not mDNS advertisers, so the old "silent on mDNS" test
+     could only ever be a permanent false alarm. Health is: reachable, holding
+     a session, and carrying the WG_LB pin. Each failure wants a different
+     response, so they are counted separately. */
+  const tdev = (tcl && tcl.devices) || [];
+  const offline = tdev.filter(function (d) { return d.reachable === false; }).length;
+  const nosess  = tdev.filter(function (d) { return d.reachable && !d.cloud_session; }).length;
+  const unpin   = tdev.filter(function (d) { return d.cloud_session && d.pinned === false; }).length;
+  const down = offline;
+  const tclLevel = !tdev.length ? ''
+                 : offline ? 'crit'
+                 : (nosess || unpin) ? 'warn'
+                 : 'ok';
+
+  /* DNS leak state is DERIVED, never assumed. The router drains its alerts
+     into proposals, so an open leak shows up as a dns_leak proposal that is
+     not yet terminal. Hardcoding "Closed" here would repeat exactly the bug
+     this rebuild is fixing. */
+  const leaks = (Array.isArray(props) ? props : []).filter(function (p) {
+    return /dns_leak/i.test(p.anomaly_type || '') &&
+           ['pending', 'approved'].indexOf(p.status) > -1;
+  });
+  const leakLevel = leaks.length ? 'warn' : 'ok';
+
+  document.getElementById('stats').innerHTML =
+    statCard('Tunnels', tuns.length ? up + ' / ' + tuns.length : '—',
+             tuns.length ? (up === tuns.length ? 'both handshaking' : 'stale handshake') : 'no data', tLevel) +
+    statCard('DNS leak', leaks.length ? 'Open' : 'Closed',
+             leaks.length ? leaks.length + ' active alert(s)' : 'no active alerts', leakLevel) +
+    statCard('TCL units',
+             !tdev.length ? '—'
+               : offline ? offline + ' offline'
+               : nosess  ? nosess + ' no session'
+               : unpin   ? unpin + ' unpinned'
+               : tdev.length + ' OK',
+             !tdev.length ? 'no data'
+               : offline ? (tdev.length - offline) + ' of ' + tdev.length + ' reachable'
+               : nosess  ? 'reachable, not remotely controllable'
+               : unpin   ? 'connected but bypassing the pin'
+               : 'connected and pinned',
+             tclLevel) +
+    statCard('Open items', waiting,
+             stuck.length ? pending.length + ' pending · ' + stuck.length + ' approved, unrun'
+                          : (waiting ? 'awaiting a decision' : 'nothing open'),
+             NA.level('count0', waiting),
+             waiting ? '/proposals?filter=open' : null);
+
+  /* worst state wins for the header pill */
+  const plural = function (n, one, many) { return n + ' ' + (n === 1 ? one : many); };
+  const worst = [tLevel, tclLevel, leakLevel, NA.level('count0', waiting)];
+  if (worst.indexOf('crit') > -1) {
+    NA.setSysState('crit', up === 0 ? 'all tunnels down'
+                          : tLevel === 'crit' ? 'tunnel down'
+                          : plural(offline, 'unit offline', 'units offline'));
+  } else if (worst.indexOf('warn') > -1) {
+    NA.setSysState('warn', leaks.length ? 'dns leak open'
+                          : nosess ? plural(nosess, 'AC not controllable', 'ACs not controllable')
+                          : unpin  ? plural(unpin, 'AC unpinned', 'ACs unpinned')
+                          : plural(waiting, 'item needs you', 'items need you'));
+  } else {
+    NA.setSysState('ok', 'all systems normal');
+  }
+
+  document.getElementById('tun-rows').innerHTML = tuns.length ? tuns.map(function (t) {
+    const ok = NA.tunnelUp(t);
+    return '<tr><td><span class="badge ' + (ok ? 'ok' : 'crit') + '"><i class="dot"></i>' +
+             (ok ? 'UP' : 'STALE') + '</span> <span style="margin-left:6px">' + NA.esc(t.name) + '</span></td>' +
+           '<td class="mono dim">' + NA.esc((t.endpoint || '—').split(':')[0]) + '</td>' +
+           '<td class="dim hide-sm">' + NA.esc(t.rx || '—') + '</td>' +
+           '<td class="dim hide-sm">' + NA.esc(t.tx || '—') + '</td>' +
+           '<td class="num dim">' + NA.esc(t.handshake || 'never') + '</td></tr>';
+  }).join('') : '<tr><td colspan="5" class="dim">Router did not return tunnel state.</td></tr>';
+
+  const active = tuns.map(function (t) { return (t.endpoint || '').split(':')[0]; });
+  const list = Array.isArray(pool) ? pool : [];
+  const spare = list.filter(function (s) { return active.indexOf(s.endpoint) === -1; }).length;
+  document.getElementById('pool-count').textContent =
+    list.length + ' total · ' + (list.length - spare) + ' active · ' + spare + ' spare';
+
+  /* was JSON.stringify(pool, null, 2) in a <pre> */
+  document.getElementById('pool-rows').innerHTML = list.length ? list.slice(0, 6).map(function (s) {
+    const on = active.indexOf(s.endpoint) > -1;
+    return '<tr><td>' + NA.esc(s.name) + '</td><td class="mono dim">' + NA.esc(s.endpoint) + '</td>' +
+           '<td style="text-align:right">' + (on ? '<span class="badge ok">ACTIVE</span>'
+                                                 : '<span class="badge">spare</span>') + '</td></tr>';
+  }).join('') : '<tr><td colspan="3" class="dim">Pool file is empty.</td></tr>';
+
+  const d = diag || {};
+  document.getElementById('diag').innerHTML = d.timestamp
+    ? '<div class="panel-pad"><div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap">' +
+      '<span class="badge ' + NA.level('sev', d.severity) + '">Level ' + NA.esc(d.severity) + '</span>' +
+      '<span class="dim mono" style="font-size:12px">' + NA.esc(NA.when(d.timestamp)) + ' · ' + NA.ago(d.timestamp) + '</span></div>' +
+      '<div>' + NA.esc(d.message || d.summary || '') + '</div></div>'
+    : '<div class="empty"><div class="big">No recent diagnosis</div><div class="sm">The agent has not flagged anything.</div></div>';
+}
+
+async function chart() {
+  const data = await NA.get('/api/telemetry/history');
+  if (!Array.isArray(data) || !data.length) return;
+  const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+  vegaEmbed('#latency-chart', {
+    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+    width: 'container', height: 190,
+    background: 'transparent',
+    config: {
+      axis:   { labelColor: dark ? '#8A949C' : '#5C666E', titleColor: dark ? '#8A949C' : '#5C666E',
+                gridColor: dark ? '#1F262B' : '#E1E7EA', domainColor: dark ? '#272E35' : '#E1E7EA' },
+      legend: { labelColor: dark ? '#8A949C' : '#5C666E', titleColor: dark ? '#8A949C' : '#5C666E' },
+      view:   { stroke: null }
+    },
+    data: { values: data.flatMap(function (d) {
+      return [{ t: d.timestamp, ms: d.wgclient_latency_ms, tunnel: 'wgclient' },
+              { t: d.timestamp, ms: d.wg2_latency_ms,      tunnel: 'wg2' }];
+    }).filter(function (x) { return x.ms !== null && x.ms !== undefined; }) },
+    mark: { type: 'line', interpolate: 'monotone', strokeWidth: 1.6 },
+    encoding: {
+      x: { field: 't', type: 'temporal', title: null },
+      y: { field: 'ms', type: 'quantitative', title: 'ms' },
+      color: { field: 'tunnel', type: 'nominal', title: null,
+               scale: { range: ['#00C2A0', '#4A9EFF'] } }
+    }
+  }, { actions: false });
+}
+
+
+async function loadTailscale() {
+  const d = await NA.get('/api/tailscale/status');
+  const host = document.getElementById('ts-panel');
+  const sub = document.getElementById('ts-sub');
+  if (!host) return;
+
+  if (!d.daemon) {
+    sub.textContent = '';
+    host.innerHTML = '<div class="empty"><div class="big">Tailscale not responding</div>' +
+      '<div class="sm">' + NA.esc(d.error || 'daemon unreachable') + '</div></div>';
+    return;
+  }
+
+  const dm = d.daemon;
+  const up = dm.state === 'Running';
+  const online = (dm.peers || []).filter(function (p) { return p.online; }).length;
+  sub.textContent = online + ' of ' + (dm.peers || []).length + ' peers online';
+
+  /* Surface warnings the local daemon cannot see - unapproved routes and key
+     expiry live only in the tailnet API. */
+  const warn = ((d.tailnet || {}).warnings) || [];
+  const tokenDays = (d.tailnet || {}).api_token_expires_in_days;
+
+  let html = '<table class="data"><thead><tr><th>Node</th><th>Address</th>' +
+             '<th class="hide-sm">Transfer</th><th style="text-align:right">State</th></tr></thead><tbody>';
+
+  html += '<tr><td><span class="badge ' + (up ? 'ok' : 'crit') + '"><i class="dot"></i>' +
+          (up ? 'UP' : NA.esc(dm.state)) + '</span> <span style="margin-left:6px">this agent</span></td>' +
+          '<td class="mono dim">' + NA.esc(dm.ip || '—') + '</td>' +
+          '<td class="dim hide-sm">routes ' + (dm.routes.length ? NA.esc(dm.routes.join(', ')) : 'none') + '</td>' +
+          '<td style="text-align:right">' + (dm.exit_node ? '<span class="badge ok">exit node</span>' : '<span class="badge">no exit</span>') + '</td></tr>';
+
+  (dm.peers || []).forEach(function (p) {
+    const gb = function (n) {
+      if (!n) return '0';
+      return n > 1e9 ? (n / 1e9).toFixed(1) + ' GB'
+           : n > 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.round(n / 1e3) + ' KB';
+    };
+    html += '<tr><td><span class="badge ' + (p.online ? 'ok' : '') + '">' +
+            (p.online ? 'online' : 'offline') + '</span> <span style="margin-left:6px">' +
+            NA.esc(p.name) + '</span></td>' +
+            '<td class="mono dim">' + NA.esc(p.ip || '—') + '</td>' +
+            '<td class="dim hide-sm">&darr;' + gb(p.rx) + ' &uarr;' + gb(p.tx) + '</td>' +
+            '<td class="dim" style="text-align:right">' + NA.esc(p.os || '') + '</td></tr>';
+  });
+  html += '</tbody></table>';
+
+  if (warn.length || (tokenDays !== null && tokenDays !== undefined && tokenDays <= 21)) {
+    html += '<div class="panel-pad" style="border-top:1px solid var(--border-soft)">';
+    warn.forEach(function (w) {
+      html += '<div style="color:var(--warn);font-size:13px">' + NA.esc(w) + '</div>';
+    });
+    if (tokenDays !== null && tokenDays !== undefined && tokenDays <= 21) {
+      html += '<div style="color:var(--warn);font-size:13px">API token expires in ' +
+              tokenDays + 'd — this panel goes stale when it does</div>';
+    }
+    html += '</div>';
+  }
+
+  host.innerHTML = html;
+}
+
+NA.poll(load, 10000);
+
+async function loadReach() {
+  const host = document.getElementById('rp-panel');
+  const sub = document.getElementById('rp-sub');
+  if (!host) return;
+  const d = await NA.get('/api/tunnels/reachability');
+
+  if (!d || !d.ok) {
+    sub.textContent = '';
+    host.innerHTML = '<div class="empty"><div class="big">No probe result</div>' +
+      '<div class="sm">' + NA.esc((d && d.error) || 'unavailable') + '</div></div>';
+    return;
+  }
+
+  /* Say how old this is. The probe runs every 15 min; anything much past that
+     means the timer stopped, and a panel that hides that is worse than blank. */
+  const age = d.age_seconds;
+  let stale = '';
+  if (age !== null && age !== undefined) {
+    const m = Math.round(age / 60);
+    sub.textContent = m < 1 ? 'just now' : m + ' min ago';
+    if (age > 2400) stale = '<div class="panel-pad" style="border-top:1px solid var(--border-soft);' +
+      'color:var(--warn);font-size:13px">Last result is ' + m + ' min old &mdash; ' +
+      'the probe runs every 15 min, so the timer may have stopped.</div>';
+  }
+
+  const r = d.results || {};
+  const names = Object.keys(r).sort();
+  if (!names.length) {
+    host.innerHTML = '<div class="empty"><div class="big">No tunnels probed</div></div>';
+    return;
+  }
+
+  let html = '<table class="data"><thead><tr><th>Tunnel</th><th>Probe target</th>' +
+             '<th class="hide-sm">Result</th><th style="text-align:right">LAN reachable</th>' +
+             '</tr></thead><tbody>';
+
+  names.forEach(function (n) {
+    const t = r[n];
+    const pct = Math.round((t.rate || 0) * 100);
+    const cls = pct === 0 ? 'crit' : (pct < 60 ? 'warn' : 'ok');
+    const label = pct === 0 ? 'BLOCKED' : (pct < 60 ? 'DEGRADED' : 'YES');
+    let detail = t.ok + '/' + (t.ok + t.refused + t.other) + ' connected';
+    if (t.refused) detail += ', ' + t.refused + ' refused';
+    if (t.other) detail += ', ' + t.other + ' timed out';
+    html += '<tr><td>' + NA.esc(n) + '</td>' +
+            '<td class="mono dim">' + NA.esc(t.target || '\u2014') + '</td>' +
+            '<td class="dim hide-sm">' + NA.esc(detail) + '</td>' +
+            '<td style="text-align:right"><span class="badge ' + cls + '">' +
+            label + ' ' + pct + '%</span></td></tr>';
+  });
+  html += '</tbody></table>';
+
+  /* Attribution. A blocked tunnel and a dead tunnel look identical from the
+     LAN; the router reject counter is what separates them, and they need
+     different fixes. */
+  const rd = d.forward_reject_delta;
+  const anyBad = names.some(function (n) { return (r[n].rate || 0) < 0.6; });
+  if (anyBad) {
+    html += '<div class="panel-pad" style="border-top:1px solid var(--border-soft);font-size:13px">';
+    if (rd && rd > 0) {
+      html += '<span style="color:var(--warn)">Router rejected ' + rd +
+              ' packet(s) during this probe &mdash; the firewall is refusing these, ' +
+              'not the network dropping them. Check for a missing lan&rarr;tunnel forwarding rule.</span>';
+    } else {
+      html += '<span style="color:var(--warn)">Router reject counter did not move &mdash; ' +
+              'packets left and nothing came back. Points at the tunnel peer or route, ' +
+              'not the firewall.</span>';
+    }
+    html += '</div>';
+  }
+
+  if ((d.unpinned || []).length) {
+    html += '<div class="panel-pad" style="border-top:1px solid var(--border-soft);' +
+            'color:var(--dim);font-size:13px">Not covered by the probe: ' +
+            NA.esc(d.unpinned.join(', ')) + ' (no pinned test destination)</div>';
+  }
+
+  host.innerHTML = html + stale;
+}
+
+NA.poll(loadTailscale, 30000);
+NA.poll(loadReach, 60000);
+chart();
+setInterval(chart, 60000);
+document.getElementById('theme-btn').addEventListener('click', function () { setTimeout(chart, 60); });
+</script>
+{% endblock %}

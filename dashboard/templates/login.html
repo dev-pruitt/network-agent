@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in &middot; Network Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+<script>
+(function () {
+  try { document.documentElement.setAttribute('data-theme', localStorage.getItem('na-theme') || 'dark'); }
+  catch (e) {}
+})();
+</script>
+</head>
+<body style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px">
+
+<div style="width:100%;max-width:340px">
+  <div style="text-align:center;margin-bottom:22px">
+    <div class="brand" style="font-size:15px">NETWORK<span>AGENT</span></div>
+    <div class="dim" style="font-size:12.5px;margin-top:5px">Router and tunnel operations</div>
+  </div>
+
+  <div class="panel"><div class="panel-pad">
+    {% if error %}
+    <div class="badge crit" style="width:100%;justify-content:center;margin-bottom:13px;padding:7px">{{ error }}</div>
+    {% endif %}
+    <form method="POST" action="/login">
+      <label class="dim" style="display:block;font-size:11px;letter-spacing:.07em;margin-bottom:5px">USERNAME</label>
+      <input type="text" name="username" autocomplete="username" required autofocus
+             style="width:100%;padding:9px 11px;margin-bottom:13px;background:var(--surface-2);
+                    border:1px solid var(--border);border-radius:6px;color:var(--text);
+                    font-family:inherit;font-size:14px">
+      <label class="dim" style="display:block;font-size:11px;letter-spacing:.07em;margin-bottom:5px">PASSWORD</label>
+      <input type="password" name="password" autocomplete="current-password" required
+             style="width:100%;padding:9px 11px;margin-bottom:17px;background:var(--surface-2);
+                    border:1px solid var(--border);border-radius:6px;color:var(--text);
+                    font-family:inherit;font-size:14px">
+      <button type="submit" class="btn primary" style="width:100%;padding:10px">Sign in</button>
+    </form>
+  </div></div>
+</div>
+
+</body>
+</html>

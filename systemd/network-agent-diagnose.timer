@@ -1,0 +1,10 @@
+[Unit]
+Description=Network Agent Diagnostics Timer
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

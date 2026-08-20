@@ -1,0 +1,81 @@
+{% extends "_base.html" %}
+{% block title %}Tunnels &middot; Network Agent{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Tunnels</h1>
+  <p>Each tunnel is pinned to its own WAN. A tunnel counts as up only if it handshook in the last 190&nbsp;seconds.</p>
+</div>
+
+<section><div id="tunnels"><div class="panel"><div class="panel-pad dim">Loading&hellip;</div></div></div></section>
+
+<section>
+  <div class="sec-head"><h2>Raw output</h2><div class="spacer"></div>
+    <button class="btn sm" id="raw-btn">Show</button>
+  </div>
+  <pre class="code" id="raw" style="display:none">&nbsp;</pre>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function rotate(t) {
+  NA.action({
+    confirm: 'Rotate ' + t + ' to a different Proton server?',
+    pending: 'Rotating ' + t + '…',
+    okTitle: t + ' rotation requested',
+    failTitle: t + ' rotation failed',
+    after: function () { setTimeout(load, 2500); }
+  });
+}
+
+async function load() {
+  const d = await NA.get('/api/wireguard/status');
+  const host = document.getElementById('tunnels');
+
+  if (d.error || !d.raw) {
+    host.innerHTML = '<div class="panel"><div class="empty"><div class="big">Cannot reach the router</div>' +
+                     '<div class="sm">' + NA.esc(d.error || 'no output from wg show') + '</div></div></div>';
+    NA.setSysState('crit', 'router unreachable');
+    return;
+  }
+
+  document.getElementById('raw').textContent = d.raw;
+  const tuns = NA.parseWg(d.raw);
+  const up = tuns.filter(NA.tunnelUp).length;
+  NA.setSysState(NA.level('tunnels', { up: up, total: tuns.length }),
+                 up + ' of ' + tuns.length + ' tunnels up');
+
+  host.innerHTML = tuns.map(function (t) {
+    const ok = NA.tunnelUp(t);
+    const cell = function (l, v) {
+      return '<div><div class="label" style="font-size:10.5px;letter-spacing:.08em;color:var(--text-faint);margin-bottom:3px">' +
+             l + '</div><div class="mono" style="font-size:12.5px">' + NA.esc(v || '—') + '</div></div>';
+    };
+    return '<div class="panel" style="margin-bottom:12px"><div class="panel-pad">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">' +
+        '<span style="font-size:16px;font-weight:650">' + NA.esc(t.name) + '</span>' +
+        '<span class="badge ' + (ok ? 'ok' : 'crit') + '"><i class="dot"></i>' + (ok ? 'UP' : 'STALE') + '</span>' +
+        '<div style="flex:1"></div>' +
+        '<button class="btn sm" onclick="rotate(\'' + t.name + '\')">Rotate</button>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px">' +
+        cell('ENDPOINT', (t.endpoint || '').split(':')[0]) +
+        cell('HANDSHAKE', t.handshake) +
+        cell('RECEIVED', t.rx) +
+        cell('SENT', t.tx) +
+        cell('PORT', t.port) +
+      '</div></div></div>';
+  }).join('');
+}
+
+document.getElementById('raw-btn').addEventListener('click', function () {
+  const el = document.getElementById('raw');
+  const shown = el.style.display !== 'none';
+  el.style.display = shown ? 'none' : 'block';
+  this.textContent = shown ? 'Show' : 'Hide';
+});
+
+NA.poll(load, 15000);
+</script>
+{% endblock %}

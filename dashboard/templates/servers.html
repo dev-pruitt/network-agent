@@ -1,0 +1,87 @@
+{% extends "_base.html" %}
+{% block title %}Servers &middot; Network Agent{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Server pool</h1>
+  <p id="summary">Loading&hellip;</p>
+</div>
+
+<section>
+  <div class="sec-head">
+    <div class="seg" id="filters">
+      <button class="active" data-f="all">All</button>
+      <button data-f="spare">Spare</button>
+      <button data-f="active">Active</button>
+    </div>
+  </div>
+  <div class="panel"><table class="data">
+    <thead><tr><th>Server</th><th>Endpoint</th><th class="hide-sm">Public key</th><th style="text-align:right">State</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="4" class="dim">Loading&hellip;</td></tr></tbody>
+  </table></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let all = [], active = [], filter = 'all';
+
+function select(name) {
+  NA.action({
+    confirm: 'Rotate wgclient onto ' + name + '?',
+    pending: 'Switching to ' + name + '…',
+    okTitle: 'Rotation requested',
+    failTitle: 'Could not switch',
+    after: function () { setTimeout(load, 2500); }
+  });
+}
+window.select = select;
+
+function render() {
+  const spare = all.filter(function (s) { return active.indexOf(s.endpoint) === -1; });
+  document.getElementById('summary').textContent =
+    all.length + ' servers · ' + (all.length - spare.length) + ' active · ' + spare.length + ' spare';
+
+  const list = filter === 'all' ? all
+             : filter === 'spare' ? spare
+             : all.filter(function (s) { return active.indexOf(s.endpoint) > -1; });
+
+  document.getElementById('rows').innerHTML = list.length ? list.map(function (s) {
+    const on = active.indexOf(s.endpoint) > -1;
+    return '<tr><td>' + NA.esc(s.name) + '</td>' +
+      '<td class="mono dim">' + NA.esc(s.endpoint) + '</td>' +
+      '<td class="mono dim hide-sm">' + NA.esc((s.pubkey || '').slice(0, 14)) + '…</td>' +
+      '<td style="text-align:right">' + (on
+        ? '<span class="badge ok"><i class="dot"></i>ACTIVE</span>'
+        : '<span class="badge">spare</span> <button class="btn sm" style="margin-left:6px" onclick="select(\'' +
+          NA.esc(s.name).replace(/'/g, "\\'") + '\')">Use</button>') +
+      '</td></tr>';
+  }).join('') : '<tr><td colspan="4"><div class="empty"><div class="big">Nothing here</div>' +
+                '<div class="sm">No servers match this filter.</div></div></td></tr>';
+}
+
+async function load() {
+  const [pool, wg] = await Promise.all([
+    NA.get('/api/server-pool/list'),
+    NA.get('/api/wireguard/status')
+  ]);
+  all = Array.isArray(pool) ? pool : [];
+  active = wg.raw ? NA.parseWg(wg.raw).map(function (t) { return (t.endpoint || '').split(':')[0]; }) : [];
+  const spare = all.length - active.filter(function (e) {
+    return all.some(function (s) { return s.endpoint === e; });
+  }).length;
+  NA.setSysState(spare > 2 ? 'ok' : spare > 0 ? 'warn' : 'crit', spare + ' spare servers');
+  render();
+}
+
+document.getElementById('filters').addEventListener('click', function (e) {
+  if (e.target.tagName !== 'BUTTON') return;
+  filter = e.target.getAttribute('data-f');
+  this.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+  e.target.classList.add('active');
+  render();
+});
+
+NA.poll(load, 15000);
+</script>
+{% endblock %}

@@ -1,0 +1,83 @@
+# Credentials & secrets
+agent-pc/config/mail.conf
+agent-pc/config/guardrails.toml
+agent-pc/config/wg-server-pool.conf
+
+# Logs & data
+agent-pc/logs/*.jsonl
+agent-pc/logs/*.txt
+agent-pc/logs/cron.log
+logs/*.jsonl
+logs/*.txt
+logs/cron.log
+
+# Python
+venv/
+*.pyc
+__pycache__/
+
+# Backups
+backups/
+
+# Dashboard temp
+dashboard/static/uploads/
+dashboard/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Sysadmin artifacts
+*.bak
+*.old
+*~
+
+# Log files
+*.log
+*.log.*
+*.bak-*
+agent-pc/config/discord.conf
+
+# --- logs: untrack everything except the model benchmark (2026-08-05) ---
+# These were tracked BEFORE .gitignore existed, so the ignore rules never
+# applied and they were published to the public repo. model_bench.json is
+# kept: a code comment in analyze_telemetry.py cites it as the reason for
+# the llama3.2:3b model choice.
+agent-pc/logs/*
+!agent-pc/logs/model_bench.json
+agent-pc/venv
+venv
+agent-pc/config/tailscale.conf
+
+# dashboard credentials - never publish
+config/dashboard.conf
+
+# camera RTSP credentials - never publish
+config/camera.conf
+
+# mediamtx config embeds camera credentials
+camera/mediamtx.yml
+camera/*.bak-*
+
+# camera portal credentials - never publish
+config/portal.conf
+
+# resident accounts - PII, never commit or publish
+camera/users.db
+camera/*.db
+
+# mediamtx config embeds camera credentials
+config/camera-settings.conf
+
+# Playback clip cache - REAL CAMERA FOOTAGE of a public parking lot.
+# ~/network-agent symlinks into this repo, so the cache materialises inside
+# the working tree. It is regenerable, large, and must never be committed
+# or published.
+agent-pc/cache/
+
+# Pretrained detector weights. ~19MB of files that are freely downloadable
+# upstream, so committing them bloats every clone to carry a copy of
+# something nobody edits. install.log records where they came from.
+agent-pc/models/*.onnx
+agent-pc/models/*.pt

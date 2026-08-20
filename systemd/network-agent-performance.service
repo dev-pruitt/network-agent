@@ -1,0 +1,6 @@
+[Unit]
+Description=WireGuard Performance Analyzer
+[Service]
+Type=oneshot
+User=agent
+ExecStart=/home/agent/network-agent/venv/bin/python3 /home/agent/network-agent/scripts/analyze_wireguard_performance.py
